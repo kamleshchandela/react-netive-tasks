@@ -132,11 +132,10 @@ function location () {
         <MapView style={styles.map}
             mapType="hybrid"
             region={{
-                
                 latitude : location?.coords.latitude||0 , 
                 longitude : location?.coords.longitude||0 , 
                 latitudeDelta : 0.8 , 
-                longitudeDelta : 0.9
+                longitudeDelta : 0.9 
             }}
         
         

@@ -1,6 +1,7 @@
-import { View , Pressable , Button , Image , ScrollView , Text , StyleSheet, Share, Alert } from 'react-native' 
+import { View , Pressable , Button , Image , ScrollView , Text , StyleSheet, Share, Alert, TextInput, Modal, TouchableOpacity } from 'react-native' 
 import { CameraView , useCameraPermissions } from 'expo-camera'
 import { useState , useRef, useEffect } from 'react';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as MediaLibrary from 'expo-media-library';
 import * as Location from "expo-location";
 import MapView , { Marker } from "react-native-maps"
@@ -13,7 +14,66 @@ function Both () {
     const [time , setTime] = useState("") ; 
     const [address, setAddress] = useState("");
     const [journal, setJournal] = useState([]);
+    const [filterMode, setFilterMode] = useState('all'); // 'all' | 'favorites'
+    const [editingItem, setEditingItem] = useState(null); // { id, title }
+    const [newTitleText, setNewTitleText] = useState('');
     const cameraRef = useRef(null) ; 
+
+    async function toggleFavorite (id) {
+        try {
+            const updatedJournal = journal.map(item => {
+                if (item.id === id) {
+                    return { ...item, isFavorite: !item.isFavorite } ; 
+                }
+                return item;
+            });
+            setJournal(updatedJournal);
+            await AsyncStorage.setItem('travel_journal', JSON.stringify(updatedJournal));
+        } catch (e) {
+            console.log("Failed to toggle favorite", e);
+        }
+    }
+
+    async function deleteEntry (id) {
+        Alert.alert(
+            "Delete Entry",
+            "Are you sure you want to delete this journal entry?",
+            [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            const updatedJournal = journal.filter(item => item.id !== id); 
+                            setJournal(updatedJournal);
+                            await AsyncStorage.setItem('travel_journal', JSON.stringify(updatedJournal));
+                        } catch (e) {
+                            console.log("Delete failed", e);
+                        }
+                    }
+                }
+            ]
+        );
+    }
+
+    async function renameEntry () {
+        if (!editingItem) return;
+        try {
+            const updatedJournal = journal.map(item => {
+                if (item.id === editingItem.id) {
+                    return { ...item, title: newTitleText.trim() || "Untitled Photo" };
+                }
+                return item;
+            }); 
+            setJournal(updatedJournal); 
+            await AsyncStorage.setItem('travel_journal', JSON.stringify(updatedJournal)); 
+            setEditingItem(null); 
+            setNewTitleText(''); 
+        } catch (e) {
+            console.log("Rename failed", e); 
+        }
+    }
 
     useEffect(() => {
         loadJournal();
@@ -41,7 +101,9 @@ function Both () {
                 uri: img.uri,
                 coords: coords,
                 address: address || "No address details",
-                timestamp: time || new Date().toLocaleString()
+                timestamp: time || new Date().toLocaleString(),
+                title: "Photo " + new Date().toLocaleDateString(),
+                isFavorite: false
             };
             const updatedJournal = [newEntry, ...journal];
             setJournal(updatedJournal);
@@ -78,11 +140,11 @@ function Both () {
 
     async function exportJournal () {
         if (journal.length === 0) {
-            Alert.alert("Empty Journal", "No entries to export.");
+            Alert.alert("Empty Journal", "No entries to export."); 
             return;
         }
         try {
-            const jsonString = JSON.stringify(journal, null, 2);
+            const jsonString = JSON.stringify(journal, null, 2); 
             await Share.share({
                 message: jsonString,
                 title: "Travel Journal Export"
@@ -155,9 +217,9 @@ function Both () {
 
                 if(locPermission.granted) {
                     const loc = await Location.getCurrentPositionAsync() ; 
-                    lat = loc.coords.latitude;
-                    lon = loc.coords.longitude;
-                    setCoords(loc.coords) ;
+                    lat = loc.coords.latitude ; 
+                    lon = loc.coords.longitude ; 
+                    setCoords(loc.coords) ; 
 
                     const add = await Location.reverseGeocodeAsync({
                         latitude : lat , 
@@ -272,20 +334,98 @@ function Both () {
                         </View>
                     )}
 
-                    {journal.map((item) => (
-                        <View key={item.id} style={styles.journalItem}>
-                            <Image source={{ uri: item.uri }} style={styles.journalThumb} />
-                            <View style={styles.journalDetails}>
-                                <Text style={styles.journalDate}>{item.timestamp}</Text>
-                                {item.coords && (
-                                    <Text style={styles.journalCoords}>Lat: {item.coords.latitude.toFixed(4)}, Lon: {item.coords.longitude.toFixed(4)}</Text>
-                                )}
-                                <Text style={styles.journalAddr} numberOfLines={2}>{item.address}</Text>
+                    {/* Filter Tab Bar */}
+                    <View style={styles.filterBar}>
+                        <TouchableOpacity 
+                            style={[styles.filterButton, filterMode === 'all' && styles.filterButtonActive]}
+                            onPress={() => setFilterMode('all')}
+                        >
+                            <Text style={[styles.filterButtonText, filterMode === 'all' && styles.filterButtonTextActive]}>
+                                All ({journal.length})
+                            </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                            style={[styles.filterButton, filterMode === 'favorites' && styles.filterButtonActive]}
+                            onPress={() => setFilterMode('favorites')}
+                        >
+                            <Text style={[styles.filterButtonText, filterMode === 'favorites' && styles.filterButtonTextActive]}>
+                                Favorites ({journal.filter(item => item.isFavorite).length})
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {journal
+                        .filter(item => filterMode === 'all' || item.isFavorite)
+                        .map((item) => (
+                            <View key={item.id} style={styles.journalItem}>
+                                <Image source={{ uri: item.uri }} style={styles.journalThumb} />
+                                <View style={styles.journalDetails}>
+                                    <View style={styles.journalTitleRow}>
+                                        <Text style={styles.journalTitle} numberOfLines={1}>
+                                            {item.title || "Untitled Photo"}
+                                        </Text>
+                                        <TouchableOpacity onPress={() => { setEditingItem(item); setNewTitleText(item.title || ''); }} style={styles.iconButton}>
+                                            <MaterialIcons name="edit" size={16} color="#007AFF" />
+                                        </TouchableOpacity>
+                                    </View>
+                                    <Text style={styles.journalDate}>{item.timestamp}</Text>
+                                    {item.coords && (
+                                        <Text style={styles.journalCoords}>Lat: {item.coords.latitude.toFixed(4)}, Lon: {item.coords.longitude.toFixed(4)}</Text>
+                                    )}
+                                    <Text style={styles.journalAddr} numberOfLines={2}>{item.address}</Text>
+                                </View>
+                                <View style={styles.journalActionsSide}>
+                                    <TouchableOpacity onPress={() => toggleFavorite(item.id)} style={styles.actionIconBtn}>
+                                        <MaterialIcons 
+                                            name={item.isFavorite ? "favorite" : "favorite-border"} 
+                                            size={24} 
+                                            color={item.isFavorite ? "#FF3B30" : "#8E8E93"} 
+                                        />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => deleteEntry(item.id)} style={styles.actionIconBtn}>
+                                        <MaterialIcons name="delete" size={24} color="#FF3B30" />
+                                    </TouchableOpacity>
+                                </View>
                             </View>
-                        </View>
-                    ))}
+                        ))
+                    }
                 </View>
             </ScrollView>
+
+            {/* Rename Modal */}
+            <Modal
+                visible={editingItem !== null}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setEditingItem(null)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Rename Photo</Text>
+                        <TextInput
+                            style={styles.modalInput}
+                            value={newTitleText}
+                            onChangeText={setNewTitleText}
+                            placeholder="Enter photo title"
+                            autoFocus
+                        />
+                        <View style={styles.modalButtons}>
+                            <TouchableOpacity 
+                                style={[styles.modalButton, styles.modalButtonCancel]} 
+                                onPress={() => setEditingItem(null)}
+                            >
+                                <Text style={styles.modalButtonTextCancel}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.modalButton, styles.modalButtonSave]} 
+                                onPress={renameEntry}
+                            >
+                                <Text style={styles.modalButtonTextSave}>Save</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </>
     )
 }
@@ -370,7 +510,8 @@ const styles = StyleSheet.create({
     journalDate: {
         fontSize: 12,
         color: '#666',
-        fontWeight: 'bold'
+        fontWeight: 'bold',
+        marginTop: 2
     },
     journalCoords: {
         fontSize: 11,
@@ -381,5 +522,117 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#222',
         marginTop: 4
+    },
+    filterBar: {
+        flexDirection: 'row',
+        marginBottom: 15,
+        backgroundColor: '#eee',
+        borderRadius: 8,
+        padding: 3
+    },
+    filterButton: {
+        flex: 1,
+        paddingVertical: 8,
+        alignItems: 'center',
+        borderRadius: 6
+    },
+    filterButtonActive: {
+        backgroundColor: '#fff',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 1,
+        elevation: 1
+    },
+    filterButtonText: {
+        fontSize: 14,
+        color: '#666',
+        fontWeight: '500'
+    },
+    filterButtonTextActive: {
+        color: '#000',
+        fontWeight: 'bold'
+    },
+    journalTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 2
+    },
+    journalTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#333',
+        maxWidth: '85%'
+    },
+    iconButton: {
+        marginLeft: 6,
+        padding: 4
+    },
+    journalActionsSide: {
+        justifyContent: 'space-around',
+        alignItems: 'center',
+        paddingLeft: 10,
+        borderLeftWidth: 1,
+        borderLeftColor: '#f0f0f0'
+    },
+    actionIconBtn: {
+        padding: 6
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    modalContent: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        padding: 20,
+        width: '80%',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 5
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 15,
+        textAlign: 'center'
+    },
+    modalInput: {
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 6,
+        padding: 10,
+        marginBottom: 20,
+        fontSize: 16
+    },
+    modalButtons: {
+        flexDirection: 'row',
+        justifyContent: 'space-between'
+    },
+    modalButton: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 6,
+        alignItems: 'center'
+    },
+    modalButtonCancel: {
+        backgroundColor: '#f5f5f5',
+        marginRight: 10
+    },
+    modalButtonSave: {
+        backgroundColor: '#007AFF',
+        marginLeft: 10
+    },
+    modalButtonTextCancel: {
+        color: '#333',
+        fontWeight: '600'
+    },
+    modalButtonTextSave: {
+        color: '#fff',
+        fontWeight: '600'
     }
 })
